@@ -124,20 +124,17 @@ pub(crate) fn interactive_shell_command(argv: &[String], shell_name: &str) -> Op
 
 fn powershell_agent_script(argv: &[String]) -> Option<String> {
     let (program, args) = argv.split_first()?;
-    if args.is_empty() {
-        return Some(format!("& {}", super::quote_powershell_arg(program)));
+    // Always use the PowerShell call operator. Never emit
+    // `Start-Process -ArgumentList ''` (invalid on Windows PowerShell) and
+    // never require Start-Process for argument-free launches like `grok`.
+    // Quoting is handled by quote_powershell_arg so spaces/metacharacters stay safe
+    // even when this script is base64-encoded for cmd.exe panes.
+    let mut parts = Vec::with_capacity(1 + args.len());
+    parts.push(super::quote_powershell_arg(program));
+    for arg in args {
+        parts.push(super::quote_powershell_arg(arg));
     }
-
-    let command_line = args
-        .iter()
-        .map(|arg| quote_windows_command_line_arg(arg))
-        .collect::<Vec<_>>()
-        .join(" ");
-    Some(format!(
-        "$p=Start-Process -FilePath {} -ArgumentList {} -NoNewWindow -Wait -PassThru",
-        super::quote_powershell_arg(program),
-        super::quote_powershell_arg(&command_line),
-    ))
+    Some(format!("& {}", parts.join(" ")))
 }
 
 fn quote_windows_command_line_arg(value: &str) -> String {
@@ -1399,12 +1396,26 @@ mod tests {
     }
 
     #[test]
-    fn powershell_agent_command_omits_argument_list_when_no_arguments_are_passed() {
+    fn powershell_agent_command_uses_call_operator_without_args() {
         let argv = vec!["opencode".into()];
 
         assert_eq!(
             super::interactive_shell_command(&argv, "powershell.exe").as_deref(),
             Some("& opencode")
+        );
+        // Grok with no extra args must not use Start-Process / empty ArgumentList.
+        assert_eq!(
+            super::interactive_shell_command(&["grok".into()], "powershell.exe").as_deref(),
+            Some("& grok")
+        );
+    }
+
+    #[test]
+    fn powershell_agent_command_uses_call_operator_with_simple_args() {
+        let argv = vec!["grok".into(), "/goal".into()];
+        assert_eq!(
+            super::interactive_shell_command(&argv, "powershell.exe").as_deref(),
+            Some("& grok /goal")
         );
     }
 
@@ -1432,8 +1443,10 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             String::from_utf16(&utf16).unwrap(),
-            "$p=Start-Process -FilePath pi -ArgumentList '\"\" \"two words\" 100% wow! a''b' -NoNewWindow -Wait -PassThru"
+            "& pi '' 'two words' '100%' 'wow!' 'a''b'"
         );
+        // Never emit Start-Process empty ArgumentList pattern.
+        assert!(!String::from_utf16(&utf16).unwrap().contains("ArgumentList ''"));
     }
 
     #[test]

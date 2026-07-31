@@ -80,8 +80,18 @@ python -m pytest -q
 | `hotkey.py` | Global backtick listener (pynput) |
 | `herdr_control.py` | Argv builders + intent dispatch to `herdr` |
 | `tools.py` | Grok function-tool schemas |
-| `grok_client.py` | xAI `wss://api.x.ai/v1/realtime` client |
+| `grok_client.py` | xAI `wss://api.x.ai/v1/realtime` client (+ reconnect) |
 | `audio_io.py` | Mic capture / speaker playback |
 | `main.py` | Entry point |
 
 Default model id is pinned to **`grok-voice-think-fast-2.0`**. Pricing is usage-based on xAI ($0.08/min audio at launch of 2.0 — see [xAI pricing](https://docs.x.ai/developers/pricing)).
+
+## Stability
+
+Hardening for hangs, socket drops, and half-dead I/O:
+
+- Defaults: [`STABILITY_DEFAULTS.md`](./STABILITY_DEFAULTS.md)
+- Manual smoke: [`SMOKE.md`](./SMOKE.md)
+- CLI tool timeout (default 30s / long 120s) — env `HERDR_VOICE_CLI_TIMEOUT_S`
+- WebSocket auto-reconnect + session resumption — env `HERDR_VOICE_RECONNECT=0` to disable
+- Fail-loud mic/speaker/hotkey errors on stderr

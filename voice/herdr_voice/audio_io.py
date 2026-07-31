@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import sys
 import threading
 from typing import Callable, Optional
 
@@ -27,12 +28,18 @@ class MicCapture:
         self._stop = threading.Event()
         self._buffer = bytearray()
         self._lock = threading.Lock()
+        self.healthy: bool = False
+        self.last_error: Optional[str] = None
 
     @property
     def listening(self) -> bool:
         return self._listening
 
-    def start_listening(self) -> None:
+    def start_listening(self) -> bool:
+        """Begin capture. Returns False if mic is known-dead."""
+        if self.last_error and not self.healthy and self._thread and not self._thread.is_alive():
+            self._banner(f"mic dead: {self.last_error}")
+            return False
         with self._lock:
             self._buffer.clear()
             self._listening = True
@@ -40,6 +47,7 @@ class MicCapture:
             self._stop.clear()
             self._thread = threading.Thread(target=self._run, name="herdr-voice-mic", daemon=True)
             self._thread.start()
+        return True
 
     def stop_listening(self) -> bytes:
         with self._lock:
@@ -55,12 +63,19 @@ class MicCapture:
             self._thread.join(timeout=2.0)
         self._thread = None
 
+    @staticmethod
+    def _banner(msg: str) -> None:
+        logger.error(msg)
+        print(f"herdr-voice: ERROR {msg}", file=sys.stderr, flush=True)
+
     def _run(self) -> None:
         try:
             import sounddevice as sd
             import numpy as np
-        except ImportError:
-            logger.error(
+        except ImportError as exc:
+            self.healthy = False
+            self.last_error = "sounddevice/numpy not installed"
+            self._banner(
                 "sounddevice/numpy not installed — mic capture disabled. "
                 "pip install -r voice/requirements.txt"
             )
@@ -88,20 +103,28 @@ class MicCapture:
                 blocksize=blocksize,
                 callback=callback,
             ):
+                self.healthy = True
+                self.last_error = None
                 while not self._stop.is_set():
                     self._stop.wait(0.1)
-        except Exception:
+        except Exception as exc:
+            self.healthy = False
+            self.last_error = str(exc)
+            self._banner(f"Microphone stream failed: {exc}")
             logger.exception("Microphone stream failed")
 
 
 class SpeakerPlayback:
-    """Queue-based PCM16 playback."""
+    """Queue-based PCM16 playback with one automatic restart attempt."""
 
     def __init__(self, sample_rate: int = 24000) -> None:
         self.sample_rate = sample_rate
         self._q: queue.Queue[Optional[bytes]] = queue.Queue()
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self.healthy: bool = False
+        self.last_error: Optional[str] = None
+        self._restart_used = False
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -121,12 +144,19 @@ class SpeakerPlayback:
             self._thread.join(timeout=2.0)
         self._thread = None
 
+    @staticmethod
+    def _banner(msg: str) -> None:
+        logger.error(msg)
+        print(f"herdr-voice: ERROR {msg}", file=sys.stderr, flush=True)
+
     def _run(self) -> None:
         try:
             import sounddevice as sd
             import numpy as np
         except ImportError:
-            logger.error("sounddevice/numpy not installed — playback disabled")
+            self.healthy = False
+            self.last_error = "sounddevice/numpy not installed"
+            self._banner("sounddevice/numpy not installed — playback disabled")
             return
 
         try:
@@ -135,6 +165,8 @@ class SpeakerPlayback:
                 channels=1,
                 dtype="float32",
             ) as stream:
+                self.healthy = True
+                self.last_error = None
                 while not self._stop.is_set():
                     try:
                         item = self._q.get(timeout=0.1)
@@ -144,5 +176,13 @@ class SpeakerPlayback:
                         break
                     audio = np.frombuffer(item, dtype=np.int16).astype(np.float32) / 32768.0
                     stream.write(audio.reshape(-1, 1))
-        except Exception:
+        except Exception as exc:
+            self.healthy = False
+            self.last_error = str(exc)
+            self._banner(f"Speaker stream failed: {exc}")
             logger.exception("Speaker stream failed")
+            if not self._restart_used and not self._stop.is_set():
+                self._restart_used = True
+                logger.warning("Attempting one speaker restart…")
+                self._thread = None
+                self.start()

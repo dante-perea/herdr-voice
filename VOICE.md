@@ -33,3 +33,7 @@ Grok is given function tools that shell out to real `herdr` CLI commands:
 `workspace *`, `tab *`, `pane *`, `agent *`, and a composite `session_snapshot`.
 
 See [`voice/README.md`](./voice/README.md) for the full tool list and architecture.
+
+## Stability
+
+See [`voice/STABILITY_DEFAULTS.md`](./voice/STABILITY_DEFAULTS.md) and [`voice/SMOKE.md`](./voice/SMOKE.md): CLI timeouts, WS reconnect/resumption, fail-loud I/O.

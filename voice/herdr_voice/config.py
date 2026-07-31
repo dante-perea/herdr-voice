@@ -19,6 +19,19 @@ DEFAULT_HERDR_BIN = "herdr"
 # Double-backtick window for start-of-turn (ms).
 DOUBLE_BACKTICK_MS = 450
 
+# Stability defaults (see voice/STABILITY_DEFAULTS.md).
+DEFAULT_CLI_TIMEOUT_S = 30.0
+DEFAULT_CLI_LONG_TIMEOUT_S = 120.0
+DEFAULT_RECONNECT_CAP_S = 30.0
+LONG_TIMEOUT_INTENTS = frozenset(
+    {
+        "agent_wait",
+        "agent_start",
+        "agent_prompt",
+        "pane_run",
+    }
+)
+
 
 @dataclass(frozen=True)
 class VoiceConfig:
@@ -28,9 +41,15 @@ class VoiceConfig:
     sample_rate: int = DEFAULT_SAMPLE_RATE
     herdr_bin: str = DEFAULT_HERDR_BIN
     double_backtick_ms: int = DOUBLE_BACKTICK_MS
+    cli_timeout_s: float = DEFAULT_CLI_TIMEOUT_S
+    cli_long_timeout_s: float = DEFAULT_CLI_LONG_TIMEOUT_S
+    reconnect_enabled: bool = True
+    reconnect_cap_s: float = DEFAULT_RECONNECT_CAP_S
 
     @classmethod
     def from_env(cls) -> "VoiceConfig":
+        reconnect_raw = os.environ.get("HERDR_VOICE_RECONNECT", "1").strip().lower()
+        reconnect_enabled = reconnect_raw not in ("0", "false", "no", "off")
         return cls(
             model_id=os.environ.get("HERDR_VOICE_MODEL", DEFAULT_MODEL_ID),
             voice=os.environ.get("HERDR_VOICE_NAME", DEFAULT_VOICE),
@@ -38,6 +57,18 @@ class VoiceConfig:
             herdr_bin=os.environ.get(HERDR_BIN_ENV, DEFAULT_HERDR_BIN),
             double_backtick_ms=int(
                 os.environ.get("HERDR_VOICE_DOUBLE_BACKTICK_MS", str(DOUBLE_BACKTICK_MS))
+            ),
+            cli_timeout_s=float(
+                os.environ.get("HERDR_VOICE_CLI_TIMEOUT_S", str(DEFAULT_CLI_TIMEOUT_S))
+            ),
+            cli_long_timeout_s=float(
+                os.environ.get(
+                    "HERDR_VOICE_CLI_LONG_TIMEOUT_S", str(DEFAULT_CLI_LONG_TIMEOUT_S)
+                )
+            ),
+            reconnect_enabled=reconnect_enabled,
+            reconnect_cap_s=float(
+                os.environ.get("HERDR_VOICE_RECONNECT_CAP_S", str(DEFAULT_RECONNECT_CAP_S))
             ),
         )
 
@@ -56,8 +87,11 @@ class VoiceConfig:
             raise SystemExit(1)
         return key
 
-    def realtime_url(self) -> str:
-        return f"{XAI_REALTIME_BASE}?model={self.model_id}"
+    def realtime_url(self, conversation_id: str | None = None) -> str:
+        url = f"{XAI_REALTIME_BASE}?model={self.model_id}"
+        if conversation_id:
+            url = f"{url}&conversation_id={conversation_id}"
+        return url
 
 
 SYSTEM_INSTRUCTIONS = """You are Herdr Voice, a hands-free controller for the herdr terminal agent multiplexer.

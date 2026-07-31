@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from typing import Callable, Optional
@@ -29,13 +30,16 @@ class BacktickHotkeyListener:
         on_event: Callable[[PttEvent], None],
         *,
         tick_ms: int = 50,
+        on_fatal: Optional[Callable[[str], None]] = None,
     ) -> None:
         self.machine = machine
         self.on_event = on_event
         self.tick_ms = tick_ms
+        self.on_fatal = on_fatal
         self._listener = None
         self._tick_thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        self.healthy: bool = False
 
     def start(self) -> None:
         try:
@@ -60,12 +64,25 @@ class BacktickHotkeyListener:
 
         self._listener = keyboard.Listener(on_press=on_press)
         self._listener.start()
+        self.healthy = True
         self._stop.clear()
         self._tick_thread = threading.Thread(target=self._tick_loop, name="ptt-tick", daemon=True)
         self._tick_thread.start()
         logger.info(
             "Hotkeys armed: press `` (double backtick) to talk, ` (single) to end turn"
         )
+
+    def _fatal(self, reason: str) -> None:
+        self.healthy = False
+        msg = f"hotkeys dead: {reason}"
+        logger.error(msg)
+        print(f"herdr-voice: ERROR {msg}", file=sys.stderr, flush=True)
+        if self.on_fatal:
+            try:
+                self.on_fatal(reason)
+            except Exception:
+                logger.exception("on_fatal failed")
+
 
     def stop(self) -> None:
         self._stop.set()
@@ -78,6 +95,10 @@ class BacktickHotkeyListener:
 
     def _tick_loop(self) -> None:
         while not self._stop.wait(self.tick_ms / 1000.0):
+            # pynput listener thread died → fail closed for the process.
+            if self._listener is not None and not getattr(self._listener, "running", True):
+                self._fatal("pynput listener stopped")
+                return
             now_ms = int(time.time() * 1000)
             prev = self.machine.state
             event = self.machine.on_tick(now_ms)

@@ -8,10 +8,18 @@ injectable so unit tests can assert payloads without a live server.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping, Optional, Sequence
 
+from .config import (
+    DEFAULT_CLI_LONG_TIMEOUT_S,
+    DEFAULT_CLI_TIMEOUT_S,
+    LONG_TIMEOUT_INTENTS,
+)
+
+logger = logging.getLogger(__name__)
 
 Runner = Callable[[Sequence[str]], "CommandResult"]
 
@@ -39,6 +47,25 @@ class HerdrController:
     env: Optional[Mapping[str, str]] = None
     # Last argv produced (even without running) — useful for inspection.
     last_argv: list[str] = field(default_factory=list)
+    default_timeout_s: float = DEFAULT_CLI_TIMEOUT_S
+    long_timeout_s: float = DEFAULT_CLI_LONG_TIMEOUT_S
+
+    def timeout_for_intent(
+        self, name: str, arguments: Optional[Mapping[str, Any]] = None
+    ) -> float:
+        """Wall-clock timeout seconds for a tool intent (see STABILITY_DEFAULTS)."""
+        args = arguments or {}
+        raw_ms = args.get("timeout_ms")
+        if raw_ms is not None:
+            try:
+                ms = float(raw_ms)
+                if ms > 0:
+                    return ms / 1000.0
+            except (TypeError, ValueError):
+                pass
+        if name in LONG_TIMEOUT_INTENTS:
+            return float(self.long_timeout_s)
+        return float(self.default_timeout_s)
 
     # --- argv builders (pure; unit-test target) ---
 
@@ -283,17 +310,36 @@ class HerdrController:
 
     # --- execution ---
 
-    def run(self, argv: Sequence[str]) -> CommandResult:
+    def run(
+        self, argv: Sequence[str], *, timeout_s: Optional[float] = None
+    ) -> CommandResult:
         self.last_argv = list(argv)
         if self.runner is not None:
             return self.runner(argv)
-        completed = subprocess.run(
-            list(argv),
-            capture_output=True,
-            text=True,
-            env=None if self.env is None else {**dict(self.env)},
-            check=False,
-        )
+        limit = self.default_timeout_s if timeout_s is None else timeout_s
+        try:
+            completed = subprocess.run(
+                list(argv),
+                capture_output=True,
+                text=True,
+                env=None if self.env is None else {**dict(self.env)},
+                check=False,
+                timeout=limit,
+            )
+        except subprocess.TimeoutExpired as exc:
+            logger.error("herdr CLI timed out after %ss: %s", limit, argv)
+            stderr = (
+                f"error=timeout timeout_s={limit} "
+                f"cmd={' '.join(str(a) for a in argv)}"
+            )
+            if exc.stderr:
+                stderr = f"{stderr}\n{exc.stderr}"
+            return CommandResult(
+                argv=list(argv),
+                returncode=-1,
+                stdout=(exc.stdout or "") if isinstance(exc.stdout, str) else "",
+                stderr=stderr,
+            )
         return CommandResult(
             argv=list(argv),
             returncode=completed.returncode,
@@ -304,12 +350,13 @@ class HerdrController:
     def execute_intent(self, name: str, arguments: Mapping[str, Any]) -> CommandResult:
         """Dispatch a tool name + JSON args to argv builder + run."""
         argv = build_argv(self, name, arguments)
+        timeout_s = self.timeout_for_intent(name, arguments)
         if name == "session_snapshot":
             # Composite: run each and merge.
             parts: list[dict[str, Any]] = []
             last: Optional[CommandResult] = None
             for one in self.session_snapshot():
-                last = self.run(one)
+                last = self.run(one, timeout_s=timeout_s)
                 parts.append(
                     {
                         "argv": last.argv,
@@ -326,7 +373,7 @@ class HerdrController:
                 stderr="",
             )
             return merged
-        return self.run(argv)
+        return self.run(argv, timeout_s=timeout_s)
 
 
 def build_argv(
