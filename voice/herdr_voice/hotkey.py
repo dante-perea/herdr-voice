@@ -90,7 +90,7 @@ class BacktickHotkeyListener:
     @staticmethod
     def _is_backtick(key) -> bool:  # type: ignore[no-untyped-def]
         try:
-            from pynput.keyboard import Key, KeyCode
+            from pynput.keyboard import KeyCode
         except ImportError:
             return False
         if isinstance(key, KeyCode):

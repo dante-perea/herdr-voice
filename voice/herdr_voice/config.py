@@ -44,12 +44,16 @@ class VoiceConfig:
     def require_api_key(self) -> str:
         key = os.environ.get(self.api_key_env, "").strip()
         if not key:
-            raise SystemExit(
+            import sys
+
+            print(
                 f"Missing {self.api_key_env}. Set it to your xAI API key before starting "
                 f"herdr-voice (model={self.model_id}).\n"
                 f"  Windows PowerShell:  $env:{self.api_key_env} = 'xai-...'\n"
-                f"  Get a key: https://console.x.ai/"
+                f"  Get a key: https://console.x.ai/",
+                file=sys.stderr,
             )
+            raise SystemExit(1)
         return key
 
     def realtime_url(self) -> str:
