@@ -1,3 +1,29 @@
+# herdr-voice
+
+> **Fork of [herdr](https://github.com/ogulcancelik/herdr)** with **Grok Voice Think Fast 2.0** hands-free control.
+> Repository: [dante-perea/herdr-voice](https://github.com/dante-perea/herdr-voice)
+
+## Voice control (this fork)
+
+Speak commands to drive herdr workspaces (spaces), tabs, panes, and agents.
+
+| Hotkey | Action |
+|--------|--------|
+| <code>``</code> (two backticks) | Start listening |
+| <code>`</code> (one backtick) | End turn and submit |
+
+```powershell
+cd voice
+python -m pip install -r requirements.txt
+$env:XAI_API_KEY = "xai-..."   # https://console.x.ai/
+python -m herdr_voice
+```
+
+Model default: **`grok-voice-think-fast-2.0`** (`wss://api.x.ai/v1/realtime`).  
+Full runbook: [`voice/README.md`](./voice/README.md).
+
+---
+
 # herdr
 
 
